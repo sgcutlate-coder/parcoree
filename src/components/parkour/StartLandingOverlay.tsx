@@ -22,9 +22,10 @@ import { useParkourStore } from '@/lib/parkourStore';
 export function StartLandingOverlay() {
   const {
     gameStarted,
-    startGame,
-    createRoom,
-    joinRoom,
+    inLobby,
+    startSoloGame,
+    createMultiplayerRoom,
+    joinMultiplayerRoom,
     platformMode,
     setPlatformMode,
   } = useParkourStore();
@@ -33,21 +34,20 @@ export function StartLandingOverlay() {
   const [selectedPlayerCount, setSelectedPlayerCount] = useState<number>(4);
   const [playerNameInput, setPlayerNameInput] = useState<string>('CyberRunner');
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
-  const [isCopied, setIsCopied] = useState(false);
 
-  if (gameStarted) return null;
+  if (gameStarted || inLobby) return null;
 
   const handleStartSolo = () => {
-    startGame('solo', 1, playerNameInput);
+    startSoloGame();
   };
 
   const handleCreateMultiplayerRoom = () => {
-    createRoom(selectedPlayerCount, playerNameInput);
+    createMultiplayerRoom(selectedPlayerCount, playerNameInput);
   };
 
   const handleJoinMultiplayerRoom = () => {
     if (!joinCodeInput.trim()) return;
-    joinRoom(joinCodeInput, playerNameInput);
+    joinMultiplayerRoom(joinCodeInput, playerNameInput);
   };
 
   return (

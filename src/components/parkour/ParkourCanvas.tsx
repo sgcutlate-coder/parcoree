@@ -137,14 +137,28 @@ function CyberRunnerModel({ isDashing, isGrounded, isDoubleJumping, speed, prima
 }
 
 // Competitor Runner 3D Model with Overhead Callsign
-function CompetitorRunnerItem({ racer }: { racer: import('@/lib/parkourStore').CompetitorRacer }) {
+function CompetitorRunnerItem({ racer }: { racer: import('@/lib/parkourStore').RemotePlayer }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      const dt = Math.min(delta, 0.1);
+      // Smoothly lerp towards target position
+      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, racer.x, dt * 15);
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, racer.y, dt * 15);
+      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, racer.z, dt * 15);
+      // Lerp rotation
+      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, racer.rotY || 0, dt * 12);
+    }
+  });
+
   return (
-    <group position={[racer.x, racer.y, racer.z]}>
+    <group ref={groupRef} position={[racer.x, racer.y, racer.z]}>
       {/* 3D Overhead Callsign Nametag */}
       <Text
-        position={[0, 2.25, 0]}
-        fontSize={0.3}
-        color={racer.color}
+        position={[0, 2.35, 0]}
+        fontSize={0.32}
+        color={racer.color || '#00ffff'}
         anchorX="center"
         anchorY="bottom"
       >
@@ -418,6 +432,9 @@ function ParkourController() {
     joystickVector,
     isJumpHeld,
     isDashHeld,
+    broadcastMyPosition,
+    currentStage,
+    gameMode,
   } = useParkourStore();
 
   // Internal Physics State
@@ -617,8 +634,6 @@ function ParkourController() {
     return unsub;
   }, []);
 
-  const updateCompetitors = useParkourStore((s) => s.updateCompetitors);
-
   // Frame Loop
   useFrame(({ clock }, delta) => {
     // Clamp delta to prevent physics explosion on lag spikes
@@ -626,7 +641,6 @@ function ParkourController() {
     const clockTime = clock.getElapsedTime();
 
     tickTimer(dt);
-    updateCompetitors(dt, playerPos.current.x, playerPos.current.y, playerPos.current.z);
 
     // 1. INPUT MOVEMENT CALCULATION
     const input = new THREE.Vector2(0, 0);
@@ -834,6 +848,21 @@ function ParkourController() {
     setRenderGrounded(isGrounded.current);
     const hSpeed = Math.hypot(playerVel.current.x, playerVel.current.z);
     setPlayerSpeed(hSpeed);
+
+    // Broadcast position to all connected room peers
+    if (gameMode === 'multiplayer') {
+      broadcastMyPosition({
+        x: playerPos.current.x,
+        y: playerPos.current.y,
+        z: playerPos.current.z,
+        rotY: playerRef.current ? playerRef.current.rotation.y : 0,
+        vy: playerVel.current.y,
+        stage: currentStage,
+        isDashing: renderDashing,
+        isGrounded: isGrounded.current,
+        speed: hSpeed,
+      });
+    }
   });
 
   return (
@@ -856,7 +885,7 @@ function ParkourController() {
 // ==========================================
 export function ParkourCanvas() {
   const currentCheckpointId = useParkourStore((s) => s.currentCheckpointId);
-  const competitors = useParkourStore((s) => s.competitors);
+  const remotePlayers = useParkourStore((s) => s.remotePlayers);
 
   return (
     <div className="absolute inset-0 w-full h-full bg-[#05060d]">
@@ -919,8 +948,8 @@ export function ParkourCanvas() {
         {/* Stage 10 Summit Monolith */}
         <SummitCoreMonolith />
 
-        {/* Multiplayer Competitor Runners (1 to 4 Players) */}
-        {competitors.map((racer) => (
+        {/* Multiplayer Connected Runners (1 to 4 Real Players) */}
+        {remotePlayers.map((racer) => (
           <CompetitorRunnerItem key={racer.id} racer={racer} />
         ))}
 

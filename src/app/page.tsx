@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useParkourStore } from '@/lib/parkourStore';
 import { ParkourHUD } from '@/components/parkour/ParkourHUD';
 import { StartLandingOverlay } from '@/components/parkour/StartLandingOverlay';
+import { MultiplayerLobbyModal } from '@/components/parkour/MultiplayerLobbyModal';
 import { parkourAudio } from '@/lib/parkourAudio';
 
 const ParkourCanvas = dynamic(
@@ -46,6 +47,9 @@ export default function ParkourApp() {
 
       {/* Cyber Speedrun HUD & Mobile Touch Controls */}
       <ParkourHUD />
+
+      {/* Real Multiplayer Room Lobby Modal */}
+      <MultiplayerLobbyModal />
 
       {/* Initial Landing Start Screen with Play Button & Developer abijith.k link */}
       <StartLandingOverlay />
