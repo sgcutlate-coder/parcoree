@@ -10,6 +10,54 @@ import { parkourAudio } from '@/lib/parkourAudio';
 import { DIFFICULTY_CONFIGS } from '@/lib/parkourDifficulties';
 
 // ==========================================
+// STATIC PRE-COMPILED GEOMETRIES & MATERIALS
+// (Prevents WebGL shader recompiles & GC stalls)
+// ==========================================
+const dataCoreGeo = new THREE.OctahedronGeometry(0.35, 0);
+const dataCoreTorusGeo = new THREE.TorusGeometry(0.5, 0.04, 8, 24);
+const dashRefillGeo = new THREE.DodecahedronGeometry(0.32, 0);
+const antiGravGeo = new THREE.SphereGeometry(0.3, 16, 16);
+const chronoGeo = new THREE.IcosahedronGeometry(0.32, 0);
+const shieldGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 6);
+
+const dataCoreMat = new THREE.MeshStandardMaterial({
+  color: '#00ffff',
+  emissive: '#00e5ff',
+  emissiveIntensity: 2.2,
+  roughness: 0.1,
+  metalness: 0.9,
+});
+const dataCoreRingMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
+
+const dashRefillMat = new THREE.MeshStandardMaterial({
+  color: '#fbbf24',
+  emissive: '#f59e0b',
+  emissiveIntensity: 2.5,
+  roughness: 0.1,
+});
+
+const antiGravMat = new THREE.MeshStandardMaterial({
+  color: '#a3e635',
+  emissive: '#84cc16',
+  emissiveIntensity: 2.5,
+  roughness: 0.1,
+});
+
+const chronoMat = new THREE.MeshStandardMaterial({
+  color: '#c084fc',
+  emissive: '#a855f7',
+  emissiveIntensity: 2.5,
+  roughness: 0.1,
+});
+
+const shieldMat = new THREE.MeshStandardMaterial({
+  color: '#38bdf8',
+  emissive: '#0284c7',
+  emissiveIntensity: 2.5,
+  roughness: 0.1,
+});
+
+// ==========================================
 // 1. CYBER RUNNER CHARACTER MODEL
 // ==========================================
 interface PlayerMeshProps {
@@ -42,7 +90,6 @@ function CyberRunnerModel({
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime() * 14;
-    // Running leg/arm swing when moving on ground
     if (isGrounded && speed > 0.5) {
       const swing = Math.sin(t) * 0.45;
       if (leftLegRef.current) leftLegRef.current.rotation.x = swing;
@@ -50,14 +97,12 @@ function CyberRunnerModel({
       if (leftArmRef.current) leftArmRef.current.rotation.x = -swing * 0.8;
       if (rightArmRef.current) rightArmRef.current.rotation.x = swing * 0.8;
     } else {
-      // Jump pose
       if (leftLegRef.current) leftLegRef.current.rotation.x = 0.3;
       if (rightLegRef.current) rightLegRef.current.rotation.x = -0.3;
       if (leftArmRef.current) leftArmRef.current.rotation.x = -0.5;
       if (rightArmRef.current) rightArmRef.current.rotation.x = -0.5;
     }
 
-    // Jetpack flare intensity
     if (jetpackGlowRef.current) {
       jetpackGlowRef.current.intensity = isDashing ? 8 : (isDoubleJumping ? 5 : 1.2);
     }
@@ -95,12 +140,10 @@ function CyberRunnerModel({
           <boxGeometry args={[0.38, 0.45, 0.15]} />
           <meshStandardMaterial color="#334155" metalness={0.9} />
         </mesh>
-        {/* Left Nozzle */}
         <mesh position={[-0.12, -0.25, 0]}>
           <cylinderGeometry args={[0.06, 0.08, 0.15, 8]} />
           <meshBasicMaterial color={isDashing ? '#ff007f' : primaryColor} />
         </mesh>
-        {/* Right Nozzle */}
         <mesh position={[0.12, -0.25, 0]}>
           <cylinderGeometry args={[0.06, 0.08, 0.15, 8]} />
           <meshBasicMaterial color={isDashing ? '#ff007f' : primaryColor} />
@@ -202,8 +245,9 @@ interface PlatformMeshProps {
 
 const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: PlatformMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const decayingStates = useParkourStore((s) => s.decayingPlatformStates);
-  const decayingState = decayingStates[platform.id];
+  const decayingState = useParkourStore((s) =>
+    platform.type === 'decaying' ? s.decayingPlatformStates[platform.id] : undefined
+  );
 
   const isJumpPad = platform.type === 'jump_pad';
   const isMoving = platform.type === 'moving';
@@ -219,7 +263,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
 
-    // Moving Platform oscillation
     if (groupRef.current && isMoving && platform.moveRange) {
       const offset = Math.sin(t * platform.moveRange.speed) * platform.moveRange.dist;
       if (platform.moveRange.axis === 'x') groupRef.current.position.x = platform.x + offset;
@@ -227,7 +270,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
       if (platform.moveRange.axis === 'z') groupRef.current.position.z = platform.z + offset;
     }
 
-    // Decaying Platform shaking animation
     if (groupRef.current && isDecaying) {
       if (decayingState?.state === 'shaking') {
         const shakeX = (Math.random() - 0.5) * 0.12;
@@ -240,7 +282,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
       }
     }
 
-    // Phase Platform blinking cycle
     if (isPhase) {
       const isSolidNow = (t % 4.5) < 2.5;
       if (isSolidNow !== phaseSolid) {
@@ -249,15 +290,11 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
     }
   });
 
-  // If decaying platform has collapsed, hide it so player falls through!
-  if (isDecaying && decayingState?.state === 'collapsed') {
-    return null;
-  }
-
+  const isCollapsed = isDecaying && decayingState?.state === 'collapsed';
   const glow = platform.glowColor || '#00ffff';
 
   return (
-    <group ref={groupRef} position={[platform.x, platform.y, platform.z]}>
+    <group ref={groupRef} position={[platform.x, platform.y, platform.z]} visible={!isCollapsed}>
       {/* Main Solid Metallic Base */}
       <mesh castShadow receiveShadow>
         <boxGeometry args={[platform.sx, platform.sy, platform.sz]} />
@@ -338,7 +375,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
             />
             <meshBasicMaterial color="#ffffff" />
           </mesh>
-          <pointLight color={glow} distance={7} intensity={3.5} />
         </group>
       )}
 
@@ -349,7 +385,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
             <circleGeometry args={[Math.min(platform.sx, platform.sz) * 0.35, 16]} />
             <meshBasicMaterial color="#10b981" transparent opacity={0.65} />
           </mesh>
-          <pointLight color="#10b981" distance={6} intensity={2.5} />
         </group>
       )}
 
@@ -360,7 +395,6 @@ const CoursePlatformItem = React.memo(function CoursePlatformItem({ platform }: 
             <boxGeometry args={[platform.sx - 0.4, 0.2, platform.sz - 0.4]} />
             <meshBasicMaterial color="#ef4444" transparent opacity={0.8} />
           </mesh>
-          <pointLight color="#ef4444" distance={5} intensity={4} />
         </group>
       )}
 
@@ -405,87 +439,49 @@ function GoldenRing({ x, y, z, radius, color }: { x: number; y: number; z: numbe
         <circleGeometry args={[radius * 0.95, 32]} />
         <meshBasicMaterial color={color} transparent opacity={0.18} side={THREE.DoubleSide} />
       </mesh>
-      <pointLight color={color} distance={10} intensity={2} />
     </group>
   );
 }
 
 // ==========================================
-// 4. COLLECTIBLE ITEM RENDERER
+// 4. COLLECTIBLE ITEM RENDERER (NO DYNAMIC LIGHTS)
+// (Zero shader rebuild, zero GC lag on pickup)
 // ==========================================
 function CollectibleItemMesh({ item }: { item: CourseItem }) {
   const groupRef = useRef<THREE.Group>(null);
   const collected = useParkourStore((s) => s.collectedItems[item.id]);
 
   useFrame(({ clock }) => {
-    if (groupRef.current) {
+    if (groupRef.current && !collected) {
       const t = clock.getElapsedTime() * 2;
       groupRef.current.rotation.y = t;
       groupRef.current.position.y = item.y + Math.sin(t * 1.5) * 0.2;
     }
   });
 
-  if (collected) return null;
-
   return (
-    <group ref={groupRef} position={[item.x, item.y, item.z]}>
+    <group ref={groupRef} position={[item.x, item.y, item.z]} visible={!collected}>
       {item.type === 'data_core' && (
-        <Float speed={3} rotationIntensity={1} floatIntensity={0.5}>
-          <mesh>
-            <octahedronGeometry args={[0.35, 0]} />
-            <meshStandardMaterial
-              color="#00ffff"
-              emissive="#00e5ff"
-              emissiveIntensity={1.8}
-              wireframe={false}
-            />
-          </mesh>
-          <mesh rotation={[Math.PI / 4, 0, 0]}>
-            <torusGeometry args={[0.5, 0.04, 8, 24]} />
-            <meshBasicMaterial color="#38bdf8" />
-          </mesh>
-          <pointLight color="#00ffff" distance={4} intensity={2} />
-        </Float>
+        <group>
+          <mesh geometry={dataCoreGeo} material={dataCoreMat} />
+          <mesh rotation={[Math.PI / 4, 0, 0]} geometry={dataCoreTorusGeo} material={dataCoreRingMat} />
+        </group>
       )}
 
       {item.type === 'dash_refill' && (
-        <Float speed={4} rotationIntensity={1.5} floatIntensity={0.5}>
-          <mesh>
-            <dodecahedronGeometry args={[0.32, 0]} />
-            <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={2} />
-          </mesh>
-          <pointLight color="#fbbf24" distance={5} intensity={2.5} />
-        </Float>
+        <mesh geometry={dashRefillGeo} material={dashRefillMat} />
       )}
 
       {item.type === 'anti_gravity' && (
-        <Float speed={2} rotationIntensity={1} floatIntensity={0.8}>
-          <mesh>
-            <sphereGeometry args={[0.3, 16, 16]} />
-            <meshStandardMaterial color="#a3e635" emissive="#84cc16" emissiveIntensity={2} />
-          </mesh>
-          <pointLight color="#a3e635" distance={5} intensity={2.5} />
-        </Float>
+        <mesh geometry={antiGravGeo} material={antiGravMat} />
       )}
 
       {item.type === 'chrono_freeze' && (
-        <Float speed={3} rotationIntensity={1} floatIntensity={0.4}>
-          <mesh>
-            <icosahedronGeometry args={[0.32, 0]} />
-            <meshStandardMaterial color="#c084fc" emissive="#a855f7" emissiveIntensity={2} />
-          </mesh>
-          <pointLight color="#c084fc" distance={5} intensity={2.5} />
-        </Float>
+        <mesh geometry={chronoGeo} material={chronoMat} />
       )}
 
       {item.type === 'shield' && (
-        <Float speed={2.5} rotationIntensity={0.8} floatIntensity={0.4}>
-          <mesh>
-            <cylinderGeometry args={[0.35, 0.35, 0.1, 6]} />
-            <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={2} />
-          </mesh>
-          <pointLight color="#38bdf8" distance={5} intensity={2.5} />
-        </Float>
+        <mesh geometry={shieldGeo} material={shieldMat} />
       )}
     </group>
   );
@@ -503,13 +499,11 @@ function CheckpointBeacon({
 }) {
   return (
     <group position={[cp.x, cp.y, cp.z]}>
-      {/* Sleek Base Pedestal */}
       <mesh position={[0, 0.25, 0]}>
         <cylinderGeometry args={[0.7, 0.9, 0.5, 8]} />
         <meshStandardMaterial color="#0f172a" roughness={0.3} metalness={0.9} />
       </mesh>
 
-      {/* Floating Hologram Diamond */}
       <Float speed={2.5} rotationIntensity={0.8} floatIntensity={0.3}>
         <mesh position={[0, 1.8, 0]}>
           <octahedronGeometry args={[0.45, 0]} />
@@ -522,7 +516,6 @@ function CheckpointBeacon({
         </mesh>
       </Float>
 
-      {/* Subtle Vertical Holographic Light Column */}
       <mesh position={[0, 15, 0]}>
         <cylinderGeometry args={[0.08, 0.2, 30, 8, 1, true]} />
         <meshBasicMaterial
@@ -533,7 +526,6 @@ function CheckpointBeacon({
         />
       </mesh>
 
-      {/* Floating Stage Name Label */}
       <Text
         position={[0, 2.7, 0]}
         fontSize={0.4}
@@ -617,30 +609,13 @@ function ParkourController() {
   const { camera } = useThree();
   const playerRef = useRef<THREE.Group>(null);
 
-  // Zustand State & Actions
-  const {
-    courseData,
-    currentCheckpointId,
-    reachCheckpoint,
-    triggerRespawn,
-    triggerHazardHit,
-    triggerDash,
-    setDoubleJumpAvailable,
-    tickTimer,
-    platformMode,
-    joystickVector,
-    isJumpHeld,
-    isDashHeld,
-    broadcastMyPosition,
-    currentStage,
-    gameMode,
-    hasShield,
-    antiGravityTimer,
-    collectItem,
-    stepOnDecayingPlatform,
-    updateDecayingPlatforms,
-    decayingPlatformStates,
-  } = useParkourStore();
+  // Granular Zustand subscriptions (avoids re-rendering controller on timer ticks!)
+  const platformMode = useParkourStore((s) => s.platformMode);
+  const joystickVector = useParkourStore((s) => s.joystickVector);
+  const isJumpHeld = useParkourStore((s) => s.isJumpHeld);
+  const isDashHeld = useParkourStore((s) => s.isDashHeld);
+  const hasShield = useParkourStore((s) => s.hasShield);
+  const antiGravityTimer = useParkourStore((s) => s.antiGravityTimer);
 
   // Internal Physics State
   const playerPos = useRef(new THREE.Vector3(0, 2, 0));
@@ -663,8 +638,6 @@ function ParkourController() {
 
   // Keyboard State
   const keys = useRef<{ [key: string]: boolean }>({});
-
-  // Slide sound throttle
   const lastSlideSound = useRef(0);
 
   // Keyboard and Touch events
@@ -771,18 +744,19 @@ function ParkourController() {
 
   // Jump Action
   const handleJumpAction = () => {
-    const jumpBoost = antiGravityTimer > 0 ? 19.5 : 15.5;
+    const state = useParkourStore.getState();
+    const jumpBoost = state.antiGravityTimer > 0 ? 19.5 : 15.5;
 
     if (isGrounded.current) {
       playerVel.current.y = jumpBoost;
       isGrounded.current = false;
       doubleJumpUsed.current = false;
-      setDoubleJumpAvailable(true);
+      state.setDoubleJumpAvailable(true);
       parkourAudio.playJump();
     } else if (!doubleJumpUsed.current) {
       playerVel.current.y = jumpBoost - 0.5;
       doubleJumpUsed.current = true;
-      setDoubleJumpAvailable(false);
+      state.setDoubleJumpAvailable(false);
       setRenderDoubleJump(true);
       setTimeout(() => setRenderDoubleJump(false), 300);
       parkourAudio.playDoubleJump();
@@ -791,7 +765,7 @@ function ParkourController() {
 
   // Dash Action
   const handleDashAction = () => {
-    const success = triggerDash();
+    const success = useParkourStore.getState().triggerDash();
     if (!success) return;
 
     isDashing.current = true;
@@ -844,8 +818,13 @@ function ParkourController() {
     const dt = Math.min(delta, 0.05);
     const clockTime = clock.getElapsedTime();
 
-    tickTimer(dt);
-    updateDecayingPlatforms(dt);
+    const store = useParkourStore.getState();
+    const courseData = store.courseData;
+    const currentCheckpointId = store.currentCheckpointId;
+    const decayingPlatformStates = store.decayingPlatformStates;
+
+    store.tickTimer(dt);
+    store.updateDecayingPlatforms(dt);
 
     // 1. INPUT MOVEMENT CALCULATION
     const input = new THREE.Vector2(0, 0);
@@ -868,7 +847,7 @@ function ParkourController() {
       .addScaledVector(forwardVec, input.y)
       .addScaledVector(rightVec, input.x);
 
-    let targetSpeed = 13.5;
+    const targetSpeed = 13.5;
 
     // 2. HORIZONTAL VELOCITY UPDATE
     if (isDashing.current) {
@@ -909,18 +888,15 @@ function ParkourController() {
     for (let i = 0; i < platforms.length; i++) {
       const p = platforms[i];
 
-      // Check if decaying platform is collapsed
       if (p.type === 'decaying' && decayingPlatformStates[p.id]?.state === 'collapsed') {
         continue;
       }
 
-      // Check if phase platform is intangible/ghost
       if (p.type === 'phase') {
         const isSolidNow = (clockTime % 4.5) < 2.5;
         if (!isSolidNow) continue;
       }
 
-      // Calculate dynamic position if moving platform
       let px = p.x;
       let py = p.y;
       let pz = p.z;
@@ -937,25 +913,21 @@ function ParkourController() {
       const maxZ = pz + p.sz / 2 + playerRadius;
       const topY = py + p.sy / 2;
 
-      // Check horizontal footprint
       if (nextX >= minX && nextX <= maxX && nextZ >= minZ && nextZ <= maxZ) {
-        // Laser hazard detection: If player touches the top of a laser hazard block
         if (p.type === 'laser_hazard') {
           if (Math.abs(playerPos.current.y - topY) < 1.0) {
-            const respawnPoint = triggerHazardHit();
+            const respawnPoint = store.triggerHazardHit();
             playerPos.current.set(respawnPoint[0], respawnPoint[1] + 1.2, respawnPoint[2]);
             playerVel.current.set(0, 0, 0);
             return;
           }
         }
 
-        // Falling down and feet cross platform top
         if (playerPos.current.y >= topY - 0.25 && nextY <= topY + 0.35 && playerVel.current.y <= 0) {
           landedOnPlatform = p;
           standingTopY = topY;
           break;
         }
-        // Already standing on top
         if (isGrounded.current && Math.abs(playerPos.current.y - topY) < 0.45) {
           landedOnPlatform = p;
           standingTopY = topY;
@@ -969,54 +941,51 @@ function ParkourController() {
       playerPos.current.z = nextZ;
       playerPos.current.y = standingTopY;
 
-      // Specific Block Behaviors
       if (landedOnPlatform.type === 'jump_pad') {
         const bounce = landedOnPlatform.bounceStrength || 24;
         playerVel.current.y = bounce;
         isGrounded.current = false;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
         parkourAudio.playJumpPad();
       } else if (landedOnPlatform.type === 'bouncy') {
         const bounce = Math.max(24, Math.abs(playerVel.current.y) * 1.2);
         playerVel.current.y = bounce;
         isGrounded.current = false;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
         parkourAudio.playBouncy();
       } else if (landedOnPlatform.type === 'decaying') {
-        stepOnDecayingPlatform(landedOnPlatform.id);
+        store.stepOnDecayingPlatform(landedOnPlatform.id);
         playerVel.current.y = 0;
         isGrounded.current = true;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
       } else if (landedOnPlatform.type === 'ice') {
-        // Ice low friction
         playerVel.current.x *= Math.pow(0.985, dt * 60);
         playerVel.current.z *= Math.pow(0.985, dt * 60);
         playerVel.current.y = 0;
         isGrounded.current = true;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
 
-        // Slide sound
         if (clockTime - lastSlideSound.current > 0.4 && Math.hypot(playerVel.current.x, playerVel.current.z) > 4) {
           lastSlideSound.current = clockTime;
           parkourAudio.playIceSlide();
         }
       } else if (landedOnPlatform.type === 'conveyor') {
         const cSpeed = landedOnPlatform.conveyorSpeed || 12;
-        playerVel.current.z -= cSpeed * dt * 25; // Boost in negative Z
+        playerVel.current.z -= cSpeed * dt * 25;
         playerVel.current.y = 0;
         isGrounded.current = true;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
         parkourAudio.playConveyorBoost();
       } else {
         playerVel.current.y = 0;
         isGrounded.current = true;
         doubleJumpUsed.current = false;
-        setDoubleJumpAvailable(true);
+        store.setDoubleJumpAvailable(true);
       }
     } else {
       playerPos.current.x = nextX;
@@ -1044,16 +1013,18 @@ function ParkourController() {
       }
     }
 
-    // 7. COLLECTIBLE ITEMS PICKUP
+    // 7. COLLECTIBLE ITEMS PICKUP (High Performance: Skips already collected items)
     for (let it = 0; it < courseData.items.length; it++) {
       const item = courseData.items[it];
+      if (store.collectedItems[item.id]) continue;
+
       const dist = Math.hypot(
         playerPos.current.x - item.x,
         playerPos.current.y - item.y,
         playerPos.current.z - item.z
       );
       if (dist < 1.8) {
-        collectItem(item.id, item.type);
+        store.collectItem(item.id, item.type);
       }
     }
 
@@ -1066,14 +1037,14 @@ function ParkourController() {
         playerPos.current.z - cp.spawnZ
       );
       if (dist < 7.0 && isGrounded.current) {
-        reachCheckpoint(cp.id);
+        store.reachCheckpoint(cp.id);
       }
     }
 
     // 9. VOID DETECTION & INSTANT RESPAWN
     const currentCp = courseData.checkpoints.find((c) => c.id === currentCheckpointId) || courseData.checkpoints[0];
     if (playerPos.current.y < currentCp.spawnY - 14 || playerPos.current.y < -12) {
-      const respawnPoint = triggerRespawn();
+      const respawnPoint = store.triggerRespawn();
       playerPos.current.set(respawnPoint[0], respawnPoint[1] + 1.2, respawnPoint[2]);
       playerVel.current.set(0, 0, 0);
       isGrounded.current = true;
@@ -1109,20 +1080,18 @@ function ParkourController() {
     camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), dt * 10);
     camera.lookAt(playerPos.current.x, playerPos.current.y + 1.4, playerPos.current.z);
 
-    // Sync state for render
     setRenderGrounded(isGrounded.current);
     const hSpeed = Math.hypot(playerVel.current.x, playerVel.current.z);
     setPlayerSpeed(hSpeed);
 
-    // Broadcast position to all connected room peers
-    if (gameMode === 'multiplayer') {
-      broadcastMyPosition({
+    if (store.gameMode === 'multiplayer') {
+      store.broadcastMyPosition({
         x: playerPos.current.x,
         y: playerPos.current.y,
         z: playerPos.current.z,
         rotY: playerRef.current ? playerRef.current.rotation.y : 0,
         vy: playerVel.current.y,
-        stage: currentStage,
+        stage: store.currentStage,
         isDashing: renderDashing,
         isGrounded: isGrounded.current,
         speed: hSpeed,
@@ -1148,10 +1117,12 @@ function ParkourController() {
 // 8. MAIN EXPORTED CANVAS COMPONENT
 // ==========================================
 export function ParkourCanvas() {
-  const { courseData, currentCheckpointId, remotePlayers, selectedDifficulty } = useParkourStore();
+  const courseData = useParkourStore((s) => s.courseData);
+  const currentCheckpointId = useParkourStore((s) => s.currentCheckpointId);
+  const remotePlayers = useParkourStore((s) => s.remotePlayers);
+  const selectedDifficulty = useParkourStore((s) => s.selectedDifficulty);
   const config = DIFFICULTY_CONFIGS[selectedDifficulty];
 
-  // Final summit checkpoint position
   const summitCheckpoint = courseData.checkpoints[courseData.checkpoints.length - 1];
 
   return (
@@ -1161,11 +1132,9 @@ export function ParkourCanvas() {
         camera={{ position: [0, 4, 10], fov: 65, near: 0.1, far: 1500 }}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
       >
-        {/* Dynamic Atmosphere & Sky Lighting per Difficulty */}
         <color attach="background" args={[config.bgAtmosphere]} />
         <fog attach="fog" args={[config.bgAtmosphere, 30, 480]} />
 
-        {/* Ambient & Directional Lights */}
         <ambientLight intensity={0.55} color={config.glowColor} />
         <directionalLight
           position={[40, 90, -100]}
@@ -1183,7 +1152,6 @@ export function ParkourCanvas() {
         />
         <directionalLight position={[-30, 40, 50]} intensity={0.8} color={config.color} />
 
-        {/* Space Cosmos Stars */}
         <Stars radius={300} depth={80} count={3800} factor={4} saturation={1} fade speed={1.5} />
 
         {/* Dynamic Floating Cyber Platforms for Active Course */}
@@ -1203,7 +1171,7 @@ export function ParkourCanvas() {
           />
         ))}
 
-        {/* Collectible Items (Data Cores & Power-ups) */}
+        {/* Collectible Items (Zero Allocation & Light Overhead) */}
         {courseData.items.map((item) => (
           <CollectibleItemMesh key={item.id} item={item} />
         ))}
