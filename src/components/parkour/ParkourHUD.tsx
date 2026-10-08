@@ -19,9 +19,11 @@ import {
   Users,
   Copy,
   Check,
+  Shield,
+  Layers,
 } from 'lucide-react';
 import { useParkourStore } from '@/lib/parkourStore';
-import { COURSE_CHECKPOINTS } from '@/lib/parkourCourse';
+import { DIFFICULTY_CONFIGS } from '@/lib/parkourDifficulties';
 
 export function ParkourHUD() {
   const {
@@ -51,11 +53,19 @@ export function ParkourHUD() {
     playerCount,
     playerRank,
     standings,
-    playerName,
+    selectedDifficulty,
+    courseData,
+    totalLevels,
+    dataCoresCollected,
+    hasShield,
+    antiGravityTimer,
+    chronoFreezeTimer,
   } = useParkourStore();
 
   const [showStageSelector, setShowStageSelector] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  const config = DIFFICULTY_CONFIGS[selectedDifficulty];
 
   const handleCopyRoomCode = () => {
     if (typeof window !== 'undefined' && navigator.clipboard) {
@@ -161,20 +171,26 @@ export function ParkourHUD() {
     let normY = dy / maxRadius;
 
     if (dist > maxRadius) {
-      normX = (dx / dist);
-      normY = (dy / dist);
+      normX = dx / dist;
+      normY = dy / dist;
     }
 
     setJoystickPos({ x: normX * (maxRadius * 0.7), y: normY * (maxRadius * 0.7) });
-    // Invert Y for 3D world forward
     setJoystickVector({ x: normX, y: -normY });
   };
 
-  // Rank calculation for 15-minute course
+  // Dynamic Rank calculation based on difficulty par time
   const calculateRank = (timeInSec: number) => {
-    if (timeInSec <= 600) return { rank: 'S-RANK', title: 'CYBER SPEEDRUN GOD', color: 'text-amber-400 border-amber-500/50 bg-amber-500/10' };
-    if (timeInSec <= 900) return { rank: 'A-RANK', title: 'SUMMIT CHAMPION (< 15 MIN)', color: 'text-cyan-400 border-cyan-500/50 bg-cyan-500/10' };
-    if (timeInSec <= 1200) return { rank: 'B-RANK', title: 'NEON PARKOUR RUNNER', color: 'text-purple-400 border-purple-500/50 bg-purple-500/10' };
+    const par = config.parTimeSeconds;
+    if (timeInSec <= par * 0.65) {
+      return { rank: 'S-RANK', title: 'CYBER SPEEDRUN GOD', color: 'text-amber-400 border-amber-500/50 bg-amber-500/10' };
+    }
+    if (timeInSec <= par) {
+      return { rank: 'A-RANK', title: `SUMMIT CHAMPION (< ${Math.floor(par / 60)} MIN)`, color: 'text-cyan-400 border-cyan-500/50 bg-cyan-500/10' };
+    }
+    if (timeInSec <= par * 1.35) {
+      return { rank: 'B-RANK', title: 'NEON PARKOUR RUNNER', color: 'text-purple-400 border-purple-500/50 bg-purple-500/10' };
+    }
     return { rank: 'SURVIVOR', title: 'PARKOUR CONQUEROR', color: 'text-emerald-400 border-emerald-500/50 bg-emerald-500/10' };
   };
 
@@ -192,7 +208,7 @@ export function ParkourHUD() {
               <div className="flex items-center gap-2">
                 <Users className="w-3.5 h-3.5 text-fuchsia-400" />
                 <span className="text-xs font-black text-white tracking-wider">ROOM: {roomCode}</span>
-                <span className="text-[10px] text-fuchsia-300 font-bold">({playerCount} PLAYERS)</span>
+                <span className="text-[10px] text-fuchsia-300 font-bold">({playerCount}P • {config.badge})</span>
               </div>
               <button
                 onClick={handleCopyRoomCode}
@@ -216,16 +232,22 @@ export function ParkourHUD() {
 
           {/* Stage & Level Info */}
           <div className="bg-slate-950/85 backdrop-blur-md border border-cyan-500/40 rounded-xl p-3 shadow-lg shadow-cyan-950/50">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="px-2 py-0.5 rounded-full text-xs font-black bg-cyan-500 text-slate-950">
-                STAGE {currentStage}/10
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span
+                className="px-2 py-0.5 rounded-full text-xs font-black uppercase text-slate-950"
+                style={{ backgroundColor: config.color }}
+              >
+                STAGE {currentStage}/{totalLevels}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300 font-bold">
+                {config.badge}
               </span>
               <span className="text-xs text-slate-400 uppercase tracking-widest">
-                PAR TIME: 15:00
+                PAR: {Math.floor(config.parTimeSeconds / 60)}:00
               </span>
             </div>
             <h1 className="text-base md:text-lg font-black tracking-wider text-white flex items-center gap-2">
-              <span className="text-cyan-400">✦</span> {stageName}
+              <span style={{ color: config.color }}>✦</span> {stageName}
             </h1>
             <p className="text-xs text-slate-400 line-clamp-1">{stageSubtitle}</p>
 
@@ -235,7 +257,7 @@ export function ParkourHUD() {
               className="mt-2 text-[10px] flex items-center gap-1 text-cyan-400 hover:text-cyan-300 transition-colors uppercase font-bold"
             >
               <Compass className="w-3 h-3" />
-              {showStageSelector ? 'Close Stage Map' : 'Select Stage Checkpoint'}
+              {showStageSelector ? 'Close Stage Map' : `Select Stage (1-${totalLevels})`}
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
@@ -245,19 +267,54 @@ export function ParkourHUD() {
         <div className="flex flex-col items-center bg-slate-950/90 backdrop-blur-md border border-cyan-400/50 rounded-2xl px-5 py-2.5 shadow-xl shadow-cyan-500/20">
           <span className="text-[10px] tracking-widest text-cyan-400 uppercase font-bold flex items-center gap-1">
             <Flame className="w-3 h-3 text-amber-400 animate-pulse" />
-            {gameMode === 'multiplayer' ? 'MULTIPLAYER RACE (PAR 15:00)' : 'SPEEDRUN TIMER (PAR 15:00)'}
+            {gameMode === 'multiplayer'
+              ? `RACE (${config.name})`
+              : `SPEEDRUN (${config.name})`}
           </span>
-          <div className={`text-2xl md:text-3xl font-black tracking-tight ${timer > 900 ? 'text-amber-400' : 'text-cyan-300'}`}>
+          <div
+            className={`text-2xl md:text-3xl font-black tracking-tight ${
+              chronoFreezeTimer > 0
+                ? 'text-fuchsia-400 animate-pulse'
+                : timer > config.parTimeSeconds
+                ? 'text-amber-400'
+                : 'text-cyan-300'
+            }`}
+          >
             {formatTime(timer)}
+            {chronoFreezeTimer > 0 && <span className="text-xs ml-1 text-fuchsia-300">❄️ FROZEN</span>}
           </div>
-          <div className="flex items-center gap-4 text-[10px] text-slate-400 mt-0.5">
+
+          {/* Stats Bar */}
+          <div className="flex items-center gap-3 text-[10px] text-slate-400 mt-0.5 flex-wrap justify-center">
             <span>FALLS: <b className="text-red-400">{deaths}</b></span>
+            <span>CORES: <b className="text-cyan-400">{dataCoresCollected}</b></span>
             <span>AIR DASH: <b className={dashCooldown <= 0.05 ? 'text-emerald-400' : 'text-slate-500'}>{dashCooldown <= 0.05 ? 'READY' : `${Math.ceil(dashCooldown * 100)}%`}</b></span>
             <span>2X JUMP: <b className={canDoubleJump ? 'text-cyan-400' : 'text-slate-500'}>{canDoubleJump ? 'READY' : 'USED'}</b></span>
           </div>
+
+          {/* Active Power-up Buff Badges */}
+          {(hasShield || antiGravityTimer > 0 || chronoFreezeTimer > 0) && (
+            <div className="flex items-center gap-1.5 mt-1.5 pt-1 border-t border-slate-800">
+              {hasShield && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-sky-950 border border-sky-400 text-sky-300 flex items-center gap-1">
+                  <Shield className="w-2.5 h-2.5" /> AEGIS SHIELD
+                </span>
+              )}
+              {antiGravityTimer > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-lime-950 border border-lime-400 text-lime-300">
+                  🪶 ANTI-GRAV ({antiGravityTimer.toFixed(1)}s)
+                </span>
+              )}
+              {chronoFreezeTimer > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-purple-950 border border-purple-400 text-purple-300">
+                  ⏱️ CHRONO ({chronoFreezeTimer.toFixed(1)}s)
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Top Right Controls & Live Multiplayer Standings */}
+        {/* Top Right Controls & Live Standings */}
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2">
             {/* Developer Portfolio Link */}
@@ -270,24 +327,24 @@ export function ParkourHUD() {
             >
               <span className="text-[10px] text-slate-400 hidden md:inline">DEV:</span>
               <span>abijith.k</span>
-              <ExternalLink className="w-3.5 h-3.5 text-cyan-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+              <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
             </a>
 
             {/* Platform Switcher */}
             <button
               onClick={() => setPlatformMode(platformMode === 'pc' ? 'mobile' : 'pc')}
               className="bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 text-white rounded-lg px-2.5 py-2 text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-95"
-              title="Toggle PC / Mobile Crossplay HUD"
+              title="Toggle PC / Mobile Controls"
             >
               {platformMode === 'mobile' ? (
                 <>
                   <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
-                  <span className="hidden sm:inline text-xs font-bold">MOBILE MODE</span>
+                  <span className="hidden sm:inline text-xs font-bold">MOBILE</span>
                 </>
               ) : (
                 <>
                   <Monitor className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline text-xs font-bold">PC MODE</span>
+                  <span className="hidden sm:inline text-xs font-bold">PC</span>
                 </>
               )}
             </button>
@@ -312,7 +369,7 @@ export function ParkourHUD() {
             </button>
           </div>
 
-          {/* Live Multiplayer Standings Widget */}
+          {/* Live Standings Widget */}
           {gameMode === 'multiplayer' && standings.length > 0 && (
             <div className="bg-slate-950/90 backdrop-blur-md border border-cyan-500/40 rounded-xl p-2.5 shadow-xl w-48 text-left animate-in fade-in">
               <div className="flex items-center justify-between mb-1.5 border-b border-slate-800 pb-1">
@@ -350,18 +407,18 @@ export function ParkourHUD() {
       </div>
 
       {/* ==================================================== */}
-      {/* STAGE SELECTOR DRAWER (OPTIONAL PRACTICE/TELEPORT)   */}
+      {/* STAGE SELECTOR DRAWER                                */}
       {/* ==================================================== */}
       {showStageSelector && (
-        <div className="pointer-events-auto bg-slate-950/95 backdrop-blur-xl border border-cyan-500/50 rounded-2xl p-4 mt-2 max-w-2xl mx-auto w-full shadow-2xl animate-in fade-in duration-200">
+        <div className="pointer-events-auto bg-slate-950/95 backdrop-blur-xl border border-cyan-500/50 rounded-2xl p-4 mt-2 max-w-3xl mx-auto w-full shadow-2xl animate-in fade-in duration-200 max-h-[60vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
             <h3 className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
-              <Sparkles className="w-4 h-4" /> 10-Stage Course Progression
+              <Sparkles className="w-4 h-4" /> {config.name} ({totalLevels} Checkpoints)
             </h3>
             <span className="text-[11px] text-slate-400">Click any stage to teleport</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            {COURSE_CHECKPOINTS.map((cp) => (
+          <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-6 gap-2">
+            {courseData.checkpoints.map((cp) => (
               <button
                 key={cp.id}
                 onClick={() => {
@@ -395,10 +452,10 @@ export function ParkourHUD() {
       )}
 
       {/* ==================================================== */}
-      {/* BOTTOM AREA: CROSSPLAY CONTROLS                     */}
+      {/* BOTTOM CONTROLS & ELEVATION BAR                      */}
       {/* ==================================================== */}
       <div className="flex items-end justify-between w-full pointer-events-auto">
-        {/* MOBILE: VIRTUAL JOYSTICK (LEFT THUMB) */}
+        {/* MOBILE JOYSTICK / PC KEYBOARD LEGEND */}
         {platformMode === 'mobile' ? (
           <div
             ref={joystickBaseRef}
@@ -407,12 +464,10 @@ export function ParkourHUD() {
             onTouchEnd={handleJoystickTouchEnd}
             className="w-32 h-32 rounded-full border-2 border-cyan-500/40 bg-slate-950/50 backdrop-blur-md relative flex items-center justify-center touch-none select-none shadow-xl shadow-cyan-950/40"
           >
-            {/* Guide Crosshair */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
               <div className="w-full h-0.5 bg-cyan-400" />
               <div className="h-full w-0.5 bg-cyan-400 absolute" />
             </div>
-            {/* Draggable Knob */}
             <div
               ref={joystickKnobRef}
               style={{
@@ -424,7 +479,6 @@ export function ParkourHUD() {
             </div>
           </div>
         ) : (
-          /* PC: KEYBOARD CONTROL LEGEND */
           <div className="hidden md:flex flex-col gap-1 bg-slate-950/80 backdrop-blur-md border border-slate-800 rounded-xl p-3 text-[11px] text-slate-400">
             <div className="text-white font-bold text-xs flex items-center gap-1.5 mb-0.5">
               <Monitor className="w-3.5 h-3.5 text-cyan-400" /> PC CONTROLS
@@ -432,20 +486,22 @@ export function ParkourHUD() {
             <div><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">W A S D</kbd> Move Runner</div>
             <div><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">SPACE</kbd> Jump & Double Jump</div>
             <div><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">SHIFT / Q / E</kbd> Air Dash Thrusters</div>
-            <div><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">MOUSE DRAG</kbd> Orbit Camera 360°</div>
+            <div><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">DRAG</kbd> Orbit Camera 360°</div>
           </div>
         )}
 
-        {/* 10-STAGE PROGRESS BAR (CENTER BOTTOM) */}
-        <div className="hidden lg:flex flex-col items-center gap-1.5 bg-slate-950/80 backdrop-blur-md border border-slate-800 rounded-xl px-4 py-2">
-          <span className="text-[10px] tracking-wider text-slate-400 uppercase font-bold">COURSE ELEVATION PROGRESS</span>
-          <div className="flex items-center gap-1.5">
-            {COURSE_CHECKPOINTS.map((cp) => (
+        {/* COMPACT STAGE ELEVATION BAR */}
+        <div className="hidden lg:flex flex-col items-center gap-1.5 bg-slate-950/80 backdrop-blur-md border border-slate-800 rounded-xl px-4 py-2 max-w-xl">
+          <span className="text-[10px] tracking-wider text-slate-400 uppercase font-bold">
+            {config.name} PROGRESS ({currentStage}/{totalLevels})
+          </span>
+          <div className="flex items-center gap-1 flex-wrap justify-center">
+            {courseData.checkpoints.map((cp) => (
               <div
                 key={cp.id}
-                className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-black border transition-all ${
+                className={`w-4 h-4 rounded flex items-center justify-center text-[8px] font-black border transition-all ${
                   currentStage >= cp.stage
-                    ? 'border-cyan-400 bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/50'
+                    ? 'border-cyan-400 bg-cyan-500 text-slate-950'
                     : 'border-slate-800 bg-slate-900/60 text-slate-600'
                 }`}
                 title={`Stage ${cp.stage}: ${cp.name}`}
@@ -456,10 +512,9 @@ export function ParkourHUD() {
           </div>
         </div>
 
-        {/* MOBILE ACTION BUTTONS (RIGHT THUMB) */}
+        {/* MOBILE ACTION BUTTONS */}
         {platformMode === 'mobile' ? (
           <div className="flex items-center gap-3 touch-none">
-            {/* Air Dash Button */}
             <button
               onTouchStart={(e) => {
                 e.preventDefault();
@@ -480,7 +535,6 @@ export function ParkourHUD() {
               <span className="text-[9px] font-black mt-0.5">DASH</span>
             </button>
 
-            {/* Jump Button */}
             <button
               onTouchStart={(e) => {
                 e.preventDefault();
@@ -499,19 +553,18 @@ export function ParkourHUD() {
         ) : (
           <div className="text-right">
             <span className="text-[10px] text-slate-500 uppercase tracking-widest">
-              AIM: MOUSE DRAG / TOUCH LOOK
+              AIM: MOUSE DRAG
             </span>
           </div>
         )}
       </div>
 
       {/* ==================================================== */}
-      {/* STAGE 10 VICTORY MODAL (COMPLETED THE 15-MIN CHALLENGE)*/}
+      {/* VICTORY MODAL                                        */}
       {/* ==================================================== */}
       {showVictoryModal && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 pointer-events-auto">
           <div className="bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 border-2 border-cyan-400/80 rounded-3xl p-6 md:p-8 max-w-lg w-full text-center shadow-2xl shadow-cyan-500/30 animate-in zoom-in-95 duration-300">
-            {/* Header Icon */}
             <div className="w-20 h-20 mx-auto rounded-full bg-cyan-500/20 border-2 border-cyan-400 flex items-center justify-center mb-4 shadow-lg shadow-cyan-500/50 animate-bounce">
               <Trophy className="w-10 h-10 text-cyan-300" />
             </div>
@@ -519,54 +572,20 @@ export function ParkourHUD() {
             <h2 className="text-2xl md:text-3xl font-black text-white tracking-wide uppercase">
               {gameMode === 'multiplayer'
                 ? (playerRank === 1 ? '🥇 1ST PLACE WINNER!' : `🏁 FINISHED IN #${playerRank} PLACE!`)
-                : '✦ COURSE COMPLETED! ✦'}
+                : `✦ ${config.name} CONQUERED! ✦`}
             </h2>
             <p className="text-sm text-cyan-300 mt-1 font-semibold">
-              {gameMode === 'multiplayer'
-                ? `You competed against ${playerCount} players and finished at the Neon Core Summit!`
-                : 'You conquered all 10 stages and reached the Neon Core Summit!'}
+              You cleared all {totalLevels} levels of {config.name}!
             </p>
 
-            {/* Multiplayer Race Results Table */}
-            {gameMode === 'multiplayer' && standings.length > 0 && (
-              <div className="my-4 p-3.5 rounded-2xl bg-slate-900/90 border border-fuchsia-500/40 text-left">
-                <div className="text-[10px] font-bold text-fuchsia-300 uppercase tracking-widest mb-2 flex items-center justify-between">
-                  <span>FINAL RACE STANDINGS ({roomCode})</span>
-                  <span>{playerCount} RACERS</span>
-                </div>
-                <div className="space-y-1.5">
-                  {standings.map((racer) => (
-                    <div
-                      key={racer.id}
-                      className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-xl ${
-                        racer.isSelf
-                          ? 'bg-cyan-500/20 border border-cyan-400/80 font-black text-white'
-                          : 'bg-slate-950/60 text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-amber-400">#{racer.rank}</span>
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: racer.color }} />
-                        <span className={racer.isSelf ? 'font-black text-white' : ''}>{racer.name}</span>
-                        {racer.isSelf && <span className="text-[9px] bg-cyan-400 text-slate-950 px-1 py-0.2 rounded font-black">YOU</span>}
-                      </div>
-                      <span className="font-mono text-cyan-300 text-[11px]">
-                        {racer.finishTime ? formatTime(racer.finishTime) : (racer.finished ? 'COMPLETED' : `STAGE ${racer.stage}`)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Rank Badge */}
+            {/* Performance Stats */}
             {finishTime !== null && (
               <div className="my-4 p-4 rounded-2xl border bg-slate-900/80">
                 {(() => {
                   const rankInfo = calculateRank(finishTime);
                   return (
                     <>
-                      <div className="text-xs uppercase tracking-widest text-slate-400 font-bold">PARKOUR PERFORMANCE RANK</div>
+                      <div className="text-xs uppercase tracking-widest text-slate-400 font-bold">PERFORMANCE RANK</div>
                       <div className={`text-3xl font-black mt-1 ${rankInfo.color}`}>
                         {rankInfo.rank}
                       </div>
@@ -577,24 +596,27 @@ export function ParkourHUD() {
                   );
                 })()}
 
-                <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-800 text-left">
+                <div className="grid grid-cols-4 gap-2 mt-4 pt-4 border-t border-slate-800 text-left">
                   <div>
-                    <span className="text-[10px] text-slate-400 block uppercase">YOUR TIME</span>
-                    <span className="text-base font-black text-cyan-300">{formatTime(finishTime)}</span>
+                    <span className="text-[10px] text-slate-400 block uppercase">TIME</span>
+                    <span className="text-xs font-black text-cyan-300">{formatTime(finishTime)}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block uppercase">PAR TARGET</span>
-                    <span className="text-base font-black text-white">15:00.00</span>
+                    <span className="text-[10px] text-slate-400 block uppercase">PAR</span>
+                    <span className="text-xs font-black text-white">{Math.floor(config.parTimeSeconds / 60)}:00</span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block uppercase">FALLS</span>
-                    <span className="text-base font-black text-red-400">{deaths}</span>
+                    <span className="text-xs font-black text-red-400">{deaths}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">CORES</span>
+                    <span className="text-xs font-black text-emerald-400">{dataCoresCollected}</span>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3 mt-6">
               <button
                 onClick={restartGame}
@@ -602,29 +624,6 @@ export function ParkourHUD() {
               >
                 <RotateCcw className="w-4 h-4" /> PLAY AGAIN / SPEEDRUN
               </button>
-            </div>
-
-            {/* Developer Credit */}
-            <div className="mt-5 pt-3 border-t border-slate-800/80 text-xs text-slate-400 flex items-center justify-center gap-2">
-              <span>Game Developed by:</span>
-              <a
-                href="https://abijith.org"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-cyan-300 font-bold hover:text-white underline inline-flex items-center gap-1 group"
-              >
-                <span>abijith.k</span>
-                <ExternalLink className="w-3 h-3 text-cyan-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-              </a>
-              <span className="text-slate-600">|</span>
-              <a
-                href="https://abijith.org"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-400 hover:text-cyan-300 underline"
-              >
-                abijith.org
-              </a>
             </div>
           </div>
         </div>

@@ -1,5 +1,17 @@
 import { create } from 'zustand';
-import { COURSE_CHECKPOINTS, COURSE_PLATFORMS } from './parkourCourse';
+import {
+  CourseDifficulty,
+  ItemType,
+  DIFFICULTY_CONFIGS,
+} from './parkourDifficulties';
+import {
+  ParkourCourseData,
+  getCourseForDifficulty,
+  CourseCheckpoint,
+  CoursePlatform,
+  CourseRing,
+  CourseItem,
+} from './parkourCourse';
 import { parkourAudio } from './parkourAudio';
 import { multiplayerNet, RemotePlayer } from './multiplayerNetwork';
 
@@ -19,6 +31,11 @@ export interface RacerStanding {
 }
 
 export interface ParkourState {
+  // Difficulty & Active Course
+  selectedDifficulty: CourseDifficulty;
+  courseData: ParkourCourseData;
+  totalLevels: number;
+
   // Gameplay Progress
   gameStarted: boolean;
   currentStage: number;
@@ -26,7 +43,7 @@ export interface ParkourState {
   stageSubtitle: string;
   currentCheckpointId: number;
   respawnPosition: [number, number, number];
-  
+
   // Timer & Stats
   timer: number;
   isTimerRunning: boolean;
@@ -35,6 +52,16 @@ export interface ParkourState {
   deaths: number;
   dashCooldown: number; // 0 to 1, 0 is ready
   canDoubleJump: boolean;
+
+  // New Items & Power-Up Buffs
+  collectedItems: Record<string, boolean>;
+  dataCoresCollected: number;
+  hasShield: boolean;
+  antiGravityTimer: number; // seconds remaining
+  chronoFreezeTimer: number; // seconds remaining
+
+  // Decaying Platforms State Map
+  decayingPlatformStates: Record<string, { state: 'intact' | 'shaking' | 'collapsed'; timer: number }>;
 
   // Real Multiplayer State (1 to 4 Real Players, ZERO Bots)
   gameMode: 'solo' | 'multiplayer';
@@ -48,13 +75,14 @@ export interface ParkourState {
   remotePlayers: RemotePlayer[];
   playerRank: number; // 1 to 4
   standings: RacerStanding[];
+  p2pStatus: 'connecting' | 'connected' | 'error';
 
   // Crossplay & Input
   platformMode: 'pc' | 'mobile';
   joystickVector: { x: number; y: number };
   isJumpHeld: boolean;
   isDashHeld: boolean;
-  
+
   // Notification & Audio
   activeNotification: string | null;
   showVictoryModal: boolean;
@@ -62,9 +90,11 @@ export interface ParkourState {
 
   // Actions
   init: () => void;
-  startSoloGame: () => void;
-  createMultiplayerRoom: (maxPlayers: number, name?: string) => string;
+  setDifficulty: (diff: CourseDifficulty) => void;
+  startSoloGame: (diff?: CourseDifficulty) => void;
+  createMultiplayerRoom: (maxPlayers: number, name?: string, diff?: CourseDifficulty) => string;
   joinMultiplayerRoom: (code: string, name?: string) => boolean;
+  claimHost: () => void;
   startMatchFromLobby: () => void;
   leaveLobby: () => void;
   broadcastMyPosition: (pos: {
@@ -81,6 +111,10 @@ export interface ParkourState {
   tickTimer: (delta: number) => void;
   reachCheckpoint: (id: number) => void;
   triggerRespawn: () => [number, number, number];
+  triggerHazardHit: () => [number, number, number];
+  collectItem: (itemId: string, type: ItemType) => void;
+  stepOnDecayingPlatform: (platId: string) => void;
+  updateDecayingPlatforms: (dt: number) => void;
   triggerDash: () => boolean;
   setDoubleJumpAvailable: (avail: boolean) => void;
   completeCourse: () => void;
@@ -94,15 +128,21 @@ export interface ParkourState {
   teleportToStage: (stageNum: number) => [number, number, number];
 }
 
-const FIRST_CP = COURSE_CHECKPOINTS[0];
+const initialDifficulty: CourseDifficulty = 'easy';
+const initialCourse = getCourseForDifficulty(initialDifficulty);
+const initialFirstCp = initialCourse.checkpoints[0];
 
 export const useParkourStore = create<ParkourState>((set, get) => ({
+  selectedDifficulty: initialDifficulty,
+  courseData: initialCourse,
+  totalLevels: initialCourse.totalStages,
+
   gameStarted: false,
   currentStage: 1,
-  stageName: FIRST_CP.name,
-  stageSubtitle: FIRST_CP.subtitle,
+  stageName: initialFirstCp.name,
+  stageSubtitle: initialFirstCp.subtitle,
   currentCheckpointId: 1,
-  respawnPosition: [FIRST_CP.spawnX, FIRST_CP.spawnY, FIRST_CP.spawnZ],
+  respawnPosition: [initialFirstCp.spawnX, initialFirstCp.spawnY, initialFirstCp.spawnZ],
 
   timer: 0,
   isTimerRunning: false,
@@ -111,6 +151,14 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   deaths: 0,
   dashCooldown: 0,
   canDoubleJump: true,
+
+  collectedItems: {},
+  dataCoresCollected: 0,
+  hasShield: false,
+  antiGravityTimer: 0,
+  chronoFreezeTimer: 0,
+
+  decayingPlatformStates: {},
 
   // Real Multiplayer defaults
   gameMode: 'solo',
@@ -124,6 +172,7 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   remotePlayers: [],
   playerRank: 1,
   standings: [],
+  p2pStatus: 'connecting',
 
   platformMode: 'pc',
   joystickVector: { x: 0, y: 0 },
@@ -148,24 +197,66 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
     }
   },
 
-  startSoloGame: () => {
+  setDifficulty: (diff: CourseDifficulty) => {
+    const course = getCourseForDifficulty(diff);
+    const firstCp = course.checkpoints[0];
+    const diffConfig = DIFFICULTY_CONFIGS[diff];
+
+    set({
+      selectedDifficulty: diff,
+      courseData: course,
+      totalLevels: course.totalStages,
+      currentStage: 1,
+      currentCheckpointId: 1,
+      stageName: firstCp.name,
+      stageSubtitle: firstCp.subtitle,
+      respawnPosition: [firstCp.spawnX, firstCp.spawnY, firstCp.spawnZ],
+      collectedItems: {},
+      dataCoresCollected: 0,
+      hasShield: false,
+      antiGravityTimer: 0,
+      chronoFreezeTimer: 0,
+      decayingPlatformStates: {},
+      timer: 0,
+      isTimerRunning: false,
+      isFinished: false,
+      finishTime: null,
+      deaths: 0,
+      dashCooldown: 0,
+      canDoubleJump: true,
+      activeNotification: `⚡ ${diffConfig.badge} SELECTED (${course.totalStages} LEVELS)!`,
+    });
+  },
+
+  startSoloGame: (diff?: CourseDifficulty) => {
+    if (diff && diff !== get().selectedDifficulty) {
+      get().setDifficulty(diff);
+    }
+    const { courseData, selectedDifficulty } = get();
+    const config = DIFFICULTY_CONFIGS[selectedDifficulty];
     multiplayerNet.disconnect();
     parkourAudio.playJump();
+
     set({
       gameMode: 'solo',
       gameStarted: true,
       inLobby: false,
       isTimerRunning: true,
+      timer: 0,
       remotePlayers: [],
       standings: [],
       playerCount: 1,
-      activeNotification: '🚀 SOLO SPEEDRUN STARTED! GOAL: < 15:00',
+      activeNotification: `🚀 ${config.badge} SPEEDRUN STARTED! (${courseData.totalStages} LEVELS)`,
     });
   },
 
-  createMultiplayerRoom: (maxPlayers: number, name = 'CyberRunner') => {
+  createMultiplayerRoom: (maxPlayers: number, name = 'CyberRunner', diff?: CourseDifficulty) => {
+    if (diff && diff !== get().selectedDifficulty) {
+      get().setDifficulty(diff);
+    }
     const code = `NEON-${Math.floor(1000 + Math.random() * 9000)}`;
     const finalName = (name || 'CyberRunner').trim();
+    const { selectedDifficulty, courseData } = get();
 
     set({
       gameMode: 'multiplayer',
@@ -178,33 +269,22 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
       gameStarted: false,
       isTimerRunning: false,
       remotePlayers: [],
-      lobbyPlayers: [
-        {
-          id: 'host',
-          name: `${finalName} (Host)`,
-          color: '#00ffff',
-          glowColor: '#00e5ff',
-          isHost: true,
-          x: 0,
-          y: 2,
-          z: 0,
-          rotY: 0,
-          vy: 0,
-          stage: 1,
-          isDashing: false,
-          isGrounded: true,
-          speed: 0,
-          finished: false,
-          finishTime: null,
-          lastSeen: Date.now(),
-        },
-      ],
-      activeNotification: `📡 ROOM ${code} CREATED! WAITING FOR PLAYERS TO JOIN...`,
+      lobbyPlayers: [],
+      activeNotification: `📡 ROOM ${code} CREATED (${DIFFICULTY_CONFIGS[selectedDifficulty].badge})! WAITING FOR PLAYERS...`,
     });
 
     multiplayerNet.connect(code, finalName, true, {
       onLobbyUpdate: (players) => {
-        set({ lobbyPlayers: players, playerCount: Math.max(1, players.length) });
+        const myId = multiplayerNet.getMyId();
+        const remotes = players.filter((p) => p.id !== myId);
+        set({
+          lobbyPlayers: players,
+          remotePlayers: remotes,
+          playerCount: Math.max(1, players.length),
+        });
+      },
+      onP2PStatusChange: (status) => {
+        set({ p2pStatus: status });
       },
       onMatchStart: () => {
         get().startMatchFromLobby();
@@ -226,8 +306,12 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   },
 
   joinMultiplayerRoom: (code: string, name = 'CyberRunner') => {
-    const cleanCode = (code || 'NEON-1000').trim().toUpperCase();
-    const finalName = (name || 'Player').trim();
+    let cleanCode = (code || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+    if (/^\d{4}$/.test(cleanCode)) {
+      cleanCode = `NEON-${cleanCode}`;
+    }
+    if (!cleanCode) cleanCode = 'NEON-1000';
+    const finalName = (name || 'CyberRunner').trim();
 
     set({
       gameMode: 'multiplayer',
@@ -238,12 +322,24 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
       gameStarted: false,
       isTimerRunning: false,
       remotePlayers: [],
+      lobbyPlayers: [],
+      p2pStatus: 'connecting',
       activeNotification: `🔗 CONNECTING TO ROOM ${cleanCode}...`,
     });
 
     multiplayerNet.connect(cleanCode, finalName, false, {
       onLobbyUpdate: (players) => {
-        set({ lobbyPlayers: players, playerCount: Math.max(1, players.length) });
+        const myId = multiplayerNet.getMyId();
+        const remotes = players.filter((p) => p.id !== myId);
+        set({
+          lobbyPlayers: players,
+          remotePlayers: remotes,
+          playerCount: Math.max(1, players.length),
+          activeNotification: `✅ CONNECTED TO ROOM ${cleanCode}! (${players.length} PLAYERS IN LOBBY)`,
+        });
+      },
+      onP2PStatusChange: (status) => {
+        set({ p2pStatus: status });
       },
       onMatchStart: () => {
         get().startMatchFromLobby();
@@ -264,10 +360,17 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
     return true;
   },
 
+  claimHost: () => {
+    set({ isHost: true });
+    multiplayerNet.promoteToHost();
+  },
+
   startMatchFromLobby: () => {
-    if (get().isHost) {
-      multiplayerNet.startMatchAsHost();
+    if (!get().isHost) {
+      set({ isHost: true });
+      multiplayerNet.promoteToHost();
     }
+    multiplayerNet.startMatchAsHost();
     parkourAudio.playJump();
     set({
       inLobby: false,
@@ -299,11 +402,12 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
     });
 
     // Update live race standings
+    const myColor = multiplayerNet.getMyColor().color;
     const allRacers: RacerStanding[] = [
       {
         id: 'self',
         name: playerName || 'You',
-        color: '#00ffff',
+        color: myColor || '#00ffff',
         stage: currentStage,
         zDist: -pos.z,
         rank: 1,
@@ -346,23 +450,34 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   },
 
   tickTimer: (delta: number) => {
-    const { gameStarted, isTimerRunning, isFinished, dashCooldown } = get();
+    const { gameStarted, isTimerRunning, isFinished, dashCooldown, chronoFreezeTimer, antiGravityTimer } = get();
     if (!gameStarted || !isTimerRunning || isFinished) return;
 
     let newDashCd = dashCooldown - delta * 0.8;
     if (newDashCd < 0) newDashCd = 0;
 
+    let newChrono = chronoFreezeTimer - delta;
+    if (newChrono < 0) newChrono = 0;
+
+    let newAntiGrav = antiGravityTimer - delta;
+    if (newAntiGrav < 0) newAntiGrav = 0;
+
+    // If Chrono Freeze is active, timer does not advance!
+    const timerDelta = newChrono > 0 ? 0 : delta;
+
     set((state) => ({
-      timer: state.timer + delta,
+      timer: state.timer + timerDelta,
       dashCooldown: newDashCd,
+      chronoFreezeTimer: newChrono,
+      antiGravityTimer: newAntiGrav,
     }));
   },
 
   reachCheckpoint: (id: number) => {
-    const { currentCheckpointId } = get();
+    const { currentCheckpointId, courseData } = get();
     if (id <= currentCheckpointId) return;
 
-    const cp = COURSE_CHECKPOINTS.find((c) => c.id === id);
+    const cp = courseData.checkpoints.find((c) => c.id === id);
     if (!cp) return;
 
     parkourAudio.playCheckpoint();
@@ -372,10 +487,10 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
       stageName: cp.name,
       stageSubtitle: cp.subtitle,
       respawnPosition: [cp.spawnX, cp.spawnY, cp.spawnZ],
-      activeNotification: `⚡ CHECKPOINT ${cp.stage}/10: ${cp.name} SAVED!`,
+      activeNotification: `⚡ CHECKPOINT ${cp.stage}/${courseData.totalStages}: ${cp.name} SAVED!`,
     });
 
-    if (cp.stage === 10) {
+    if (cp.stage === courseData.totalStages) {
       get().completeCourse();
     }
   },
@@ -388,6 +503,130 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
       activeNotification: `⚠️ FALL DETECTED! RESPAWNING AT STAGE ${state.currentStage}...`,
     }));
     return get().respawnPosition;
+  },
+
+  triggerHazardHit: () => {
+    const { hasShield, respawnPosition, currentStage } = get();
+    if (hasShield) {
+      parkourAudio.playPowerUp();
+      set({
+        hasShield: false,
+        activeNotification: '🛡️ AEGIS SHIELD ABSORBED HAZARD HIT!',
+      });
+      return respawnPosition;
+    }
+
+    parkourAudio.playHazardZap();
+    set((state) => ({
+      deaths: state.deaths + 1,
+      dashCooldown: 0,
+      activeNotification: `💥 LASER HAZARD DETECTED! RESPAWNING AT STAGE ${currentStage}...`,
+    }));
+    return respawnPosition;
+  },
+
+  collectItem: (itemId: string, type: ItemType) => {
+    const { collectedItems } = get();
+    if (collectedItems[itemId]) return;
+
+    const updated = { ...collectedItems, [itemId]: true };
+
+    switch (type) {
+      case 'data_core': {
+        parkourAudio.playItemCollect();
+        const count = get().dataCoresCollected + 1;
+        set({
+          collectedItems: updated,
+          dataCoresCollected: count,
+          activeNotification: `💠 DATA CORE COLLECTED! (${count} CORES)`,
+        });
+        break;
+      }
+      case 'dash_refill': {
+        parkourAudio.playPowerUp();
+        set({
+          collectedItems: updated,
+          dashCooldown: 0,
+          activeNotification: '⚡ AIR DASH CHARGED! READY FOR AIR BOOST!',
+        });
+        break;
+      }
+      case 'anti_gravity': {
+        parkourAudio.playPowerUp();
+        set({
+          collectedItems: updated,
+          antiGravityTimer: 7.0,
+          activeNotification: '🪶 ANTI-GRAVITY ACTIVATED (7s)! HIGHER JUMP!',
+        });
+        break;
+      }
+      case 'chrono_freeze': {
+        parkourAudio.playPowerUp();
+        set({
+          collectedItems: updated,
+          chronoFreezeTimer: 5.0,
+          activeNotification: '⏱️ CHRONO FREEZE! STOPWATCH FROZEN (5s)!',
+        });
+        break;
+      }
+      case 'shield': {
+        parkourAudio.playPowerUp();
+        set({
+          collectedItems: updated,
+          hasShield: true,
+          activeNotification: '🛡️ AEGIS SHIELD EQUIPPED! +1 HAZARD ABSORPTION',
+        });
+        break;
+      }
+    }
+  },
+
+  stepOnDecayingPlatform: (platId: string) => {
+    const { decayingPlatformStates } = get();
+    const current = decayingPlatformStates[platId];
+    if (current && current.state !== 'intact') return;
+
+    parkourAudio.playDecayWarning();
+    set({
+      decayingPlatformStates: {
+        ...decayingPlatformStates,
+        [platId]: { state: 'shaking', timer: 1.2 }, // collapses in 1.2s
+      },
+      activeNotification: '⚠️ DECAYING BLOCK COLLAPSING! JUMP QUICKLY!',
+    });
+  },
+
+  updateDecayingPlatforms: (dt: number) => {
+    const { decayingPlatformStates } = get();
+    let hasChanges = false;
+    const nextStates = { ...decayingPlatformStates };
+
+    for (const id in nextStates) {
+      const entry = nextStates[id];
+      if (entry.state === 'shaking') {
+        const nextTimer = entry.timer - dt;
+        if (nextTimer <= 0) {
+          nextStates[id] = { state: 'collapsed', timer: 3.5 }; // respawns after 3.5s
+          hasChanges = true;
+        } else {
+          nextStates[id] = { ...entry, timer: nextTimer };
+          hasChanges = true;
+        }
+      } else if (entry.state === 'collapsed') {
+        const nextTimer = entry.timer - dt;
+        if (nextTimer <= 0) {
+          delete nextStates[id]; // respawn intact
+          hasChanges = true;
+        } else {
+          nextStates[id] = { ...entry, timer: nextTimer };
+          hasChanges = true;
+        }
+      }
+    }
+
+    if (hasChanges) {
+      set({ decayingPlatformStates: nextStates });
+    }
   },
 
   triggerDash: () => {
@@ -404,13 +643,14 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   },
 
   completeCourse: () => {
-    const { timer, isFinished, playerRank, gameMode } = get();
+    const { timer, isFinished, playerRank, gameMode, selectedDifficulty } = get();
     if (isFinished) return;
 
     parkourAudio.playVictory();
+    const config = DIFFICULTY_CONFIGS[selectedDifficulty];
     const rankTitle = gameMode === 'multiplayer'
       ? (playerRank === 1 ? '🥇 1ST PLACE WINNER!' : `🏁 FINISHED IN #${playerRank} PLACE!`)
-      : '🏆 NEON CORE SUMMIT REACHED!';
+      : `🏆 ${config.name} CONQUERED!`;
 
     set({
       isFinished: true,
@@ -422,13 +662,16 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   },
 
   restartGame: () => {
+    const { courseData } = get();
+    const firstCp = courseData.checkpoints[0];
+
     set({
       gameStarted: true,
       currentStage: 1,
-      stageName: FIRST_CP.name,
-      stageSubtitle: FIRST_CP.subtitle,
+      stageName: firstCp.name,
+      stageSubtitle: firstCp.subtitle,
       currentCheckpointId: 1,
-      respawnPosition: [FIRST_CP.spawnX, FIRST_CP.spawnY, FIRST_CP.spawnZ],
+      respawnPosition: [firstCp.spawnX, firstCp.spawnY, firstCp.spawnZ],
       timer: 0,
       isTimerRunning: true,
       isFinished: false,
@@ -437,6 +680,12 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
       dashCooldown: 0,
       canDoubleJump: true,
       showVictoryModal: false,
+      collectedItems: {},
+      dataCoresCollected: 0,
+      hasShield: false,
+      antiGravityTimer: 0,
+      chronoFreezeTimer: 0,
+      decayingPlatformStates: {},
       activeNotification: '🏁 COURSE RESTARTED! GO FOR THE S-RANK!',
     });
   },
@@ -468,7 +717,8 @@ export const useParkourStore = create<ParkourState>((set, get) => ({
   },
 
   teleportToStage: (stageNum: number) => {
-    const cp = COURSE_CHECKPOINTS.find((c) => c.stage === stageNum) || FIRST_CP;
+    const { courseData } = get();
+    const cp = courseData.checkpoints.find((c) => c.stage === stageNum) || courseData.checkpoints[0];
     parkourAudio.playCheckpoint();
     set({
       currentCheckpointId: cp.id,
